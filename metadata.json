@@ -1,0 +1,7 @@
+{
+  "name": "GT Smart Scheduler",
+  "description": "An agentic AI application for Georgia Tech students to intelligently schedule and book meeting rooms. Personal agents for each student collaborate with a central coordinator agent to find optimal meeting times and locations based on calendars, locations, and priorities.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
