@@ -1,4 +1,4 @@
-import { User, Room, CalendarEvent, Email } from './types';
+import { User, Room, CalendarEvent } from './types';
 
 export const MOCK_USERS: User[] = [
   { id: 'user-1', name: 'Jeevan', email: 'jeevan@gmail.com' },
@@ -26,12 +26,7 @@ const todayAt = (hour: number, minute: number = 0) => {
 };
 
 export const MOCK_CALENDARS: Record<string, CalendarEvent[]> = {
-  // Mock calendars are still used for scheduling logic as we haven't integrated Google Calendar API yet.
-  'user-1': [ 
-    { title: 'CS 1331 Lecture', startTime: todayAt(10), endTime: todayAt(11), priority: 'HIGH' },
-    { title: 'Lunch', startTime: todayAt(12), endTime: todayAt(13), priority: 'LOW' },
-    { title: 'AI Project Work', startTime: todayAt(15), endTime: todayAt(17), priority: 'MEDIUM' },
-  ],
+  // Mock calendars are still used for scheduling logic for other users in a session.
   'user-2': [ 
     { title: 'Physics Lab', startTime: todayAt(13), endTime: todayAt(15), priority: 'HIGH' },
     { title: 'TA Office Hours', startTime: todayAt(16), endTime: todayAt(17), priority: 'MEDIUM' },
@@ -40,17 +35,4 @@ export const MOCK_CALENDARS: Record<string, CalendarEvent[]> = {
     { title: 'Part-time Job', startTime: todayAt(9), endTime: todayAt(12), priority: 'HIGH' },
     { title: 'Gym', startTime: todayAt(17), endTime: todayAt(18, 30), priority: 'LOW' },
   ],
-};
-
-export const MOCK_EMAILS: Record<string, Email[]> = {
-  'user-1': [
-    { id: 'email-1', threadId: 'thread-1', snippet: 'Hey, can we move our meeting to 3 PM?', sender: 'Sarah', subject: 'Meeting Time Change', timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString() },
-    { id: 'email-2', threadId: 'thread-2', snippet: 'The new project specs are attached.', sender: 'Professor Smith', subject: 'RE: AI Project Specs', timestamp: new Date(Date.now() - 1000 * 60 * 60).toISOString() },
-  ],
-  'user-2': [
-    { id: 'email-3', threadId: 'thread-3', snippet: 'Just wanted to confirm our study session for tomorrow.', sender: 'Bob', subject: 'OS Study Group', timestamp: new Date(Date.now() - 1000 * 60 * 20).toISOString() },
-  ],
-  'user-3': [
-     { id: 'email-4', threadId: 'thread-4', snippet: 'Your shift for next week has been posted.', sender: 'Manager', subject: 'Work Schedule', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString() },
-  ]
 };

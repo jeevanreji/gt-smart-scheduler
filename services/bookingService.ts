@@ -1,33 +1,71 @@
-import { Room, User } from "../types";
+import { Room, User, Booking } from "../types";
 
-// This is a mock service to simulate booking a room.
-// In a real application, this would interact with a calendar or booking API.
+let bookings: Booking[] = [];
 
 /**
- * "Books" a room by logging the action.
- * @param room The room to book.
- * @param startTime The start time of the booking.
- * @param endTime The end time of the booking.
- * @param attendees The users attending the meeting.
- * @returns A promise that resolves with a mock booking confirmation.
+ * Initializes the booking service with existing bookings from a persistent source.
+ * @param existingBookings An array of bookings to load into memory.
  */
-export const bookRoom = async (
+export const init = (existingBookings: Booking[]) => {
+    console.log(`[Booking Service] Initializing with ${existingBookings.length} bookings.`);
+    bookings = existingBookings;
+};
+
+/**
+ * Checks if a room is available for a given time slot, avoiding overlaps.
+ * @param roomId The ID of the room to check.
+ * @param startTime The desired start time (ISO string).
+ * @param endTime The desired end time (ISO string).
+ * @returns `true` if the room is available, `false` otherwise.
+ */
+const isRoomAvailable = (roomId: string, startTime: string, endTime: string): boolean => {
+    const start = new Date(startTime).getTime();
+    const end = new Date(endTime).getTime();
+
+    for (const booking of bookings) {
+        if (booking.roomId === roomId) {
+            const bookingStart = new Date(booking.startTime).getTime();
+            const bookingEnd = new Date(booking.endTime).getTime();
+            // Check for overlap: (StartA < EndB) and (EndA > StartB)
+            if (start < bookingEnd && end > bookingStart) {
+                return false; // There is an overlap
+            }
+        }
+    }
+    return true; // No overlaps found
+};
+
+
+/**
+ * Books a room if it's available and adds it to the internal database.
+ * @returns The new booking object if successful, otherwise null.
+ */
+export const bookRoom = (
   room: Room, 
   startTime: string, 
   endTime: string, 
   attendees: User[]
-): Promise<{ success: boolean; bookingId: string }> => {
+): Booking | null => {
   const attendeeEmails = attendees.map(a => a.email).join(', ');
   console.log(
-    `[Booking Service] Attempting to book room: "${room.name}" in "${room.building}"\n` +
-    `From: ${new Date(startTime).toLocaleString()}\n` +
-    `To:   ${new Date(endTime).toLocaleString()}\n` +
-    `For:  ${attendeeEmails}`
+    `[Booking Service] Attempting to book room: "${room.name}"\n` +
+    `From: ${new Date(startTime).toLocaleString()} To: ${new Date(endTime).toLocaleString()}`
   );
+
+  if (!isRoomAvailable(room.id, startTime, endTime)) {
+      console.error(`[Booking Service] CONFLICT: Room ${room.id} is already booked for this time.`);
+      return null;
+  }
   
-  // Simulate a network delay
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  console.log('[Booking Service] Mock booking successful!');
-  return { success: true, bookingId: `mock-booking-${Date.now()}` };
+  const newBooking: Booking = {
+      bookingId: `booking-${Date.now()}`,
+      roomId: room.id,
+      startTime,
+      endTime,
+      participants: attendees
+  };
+
+  bookings.push(newBooking);
+  console.log(`[Booking Service] Booking successful! ID: ${newBooking.bookingId}`);
+  return newBooking;
 };

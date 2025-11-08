@@ -21,12 +21,11 @@ export interface CalendarEvent {
   title: string;
   startTime: string; // ISO String
   endTime: string; // ISO String
-  priority: 'HIGH' | 'MEDIUM' | 'LOW';
+  priority?: 'HIGH' | 'MEDIUM' | 'LOW'; // This may not come from Google Calendar
 }
 
 export interface Email {
   id: string;
-  threadId: string;
   snippet: string;
   sender: string;
   subject: string;
@@ -43,6 +42,11 @@ export interface MeetingProposal {
 
 export type SessionState = 'PENDING' | 'PLANNING' | 'PROPOSED' | 'CONFIRMED' | 'CANCELED';
 
+export interface ExcludedSlot {
+    startTime: string;
+    endTime: string;
+}
+
 export interface Session {
   id: string;
   name: string;
@@ -50,4 +54,13 @@ export interface Session {
   state: SessionState;
   readyStatus: Record<string, 'READY' | 'PENDING'>; // userId -> status
   proposal?: MeetingProposal;
+  excludedSlots: ExcludedSlot[];
+}
+
+export interface Booking {
+    bookingId: string;
+    roomId: string;
+    startTime: string;
+    endTime: string;
+    participants: User[];
 }

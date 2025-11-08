@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import LoginScreen from './components/LoginScreen';
 import Dashboard from './components/Dashboard';
 import SessionDetail from './components/SessionDetail';
-import { User, Session, Location, Email } from './types';
+import { User, Session, Location, Email, CalendarEvent, Booking } from './types';
 import { MOCK_USERS, MOCK_CALENDARS, AVAILABLE_ROOMS } from './constants';
 import * as gmailService from './services/gmailService';
 import * as geminiService from './services/geminiService';
@@ -12,49 +12,93 @@ import { DottedLoader } from './components/icons/DottedLoader';
 const App: React.FC = () => {
   const [isGapiLoaded, setIsGapiLoaded] = useState(false);
   const [gapiError, setGapiError] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [sessions, setSessions] = useState<Session[]>([]);
+  
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    const savedUser = localStorage.getItem('currentUser');
+    return savedUser ? JSON.parse(savedUser) : null;
+  });
+  const [sessions, setSessions] = useState<Session[]>(() => {
+    const savedSessions = localStorage.getItem('sessions');
+    return savedSessions ? JSON.parse(savedSessions) : [];
+  });
+   const [bookings, setBookings] = useState<Booking[]>(() => {
+    const savedBookings = localStorage.getItem('bookings');
+    return savedBookings ? JSON.parse(savedBookings) : [];
+  });
+  
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [userLocation, setUserLocation] = useState<Location | null>(null);
   const [emails, setEmails] = useState<Email[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Initialize Google Client
+  // Initialize Services and Load Data
   useEffect(() => {
-    const init = async () => {
-      const { loaded, error } = await gmailService.initClient();
-      setIsGapiLoaded(loaded);
-      if (error) setGapiError(error);
-      setIsLoading(false);
+    bookingService.init(bookings);
+    const initGoogleClient = async () => {
+      try {
+        await gmailService.initClient();
+        setIsGapiLoaded(true);
+        if (currentUser) {
+            // If user is already logged in from localStorage, refresh their token and data
+            const refreshedUser = await gmailService.signIn(true); // Attempt silent sign-in
+            setCurrentUser(refreshedUser);
+            const [userEmails, userEvents] = await Promise.all([
+              gmailService.fetchEmails(4),
+              gmailService.fetchCalendarEvents()
+            ]);
+            setEmails(userEmails);
+            setCalendarEvents(userEvents);
+        }
+      } catch (error: any) {
+        console.error("GAPI Init Error:", error);
+        setGapiError(error.message || "Failed to initialize Google Services.");
+        // If silent sign-in fails, log the user out
+        if(currentUser){
+            handleLogout();
+        }
+      } finally {
+        setIsLoading(false);
+      }
     };
-    init();
-  }, []);
+    initGoogleClient();
+  }, []); // Run only once on mount
+
+  // Persist state to localStorage
+  useEffect(() => {
+    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+    localStorage.setItem('sessions', JSON.stringify(sessions));
+    localStorage.setItem('bookings', JSON.stringify(bookings));
+  }, [currentUser, sessions, bookings]);
 
   // Get user location
   useEffect(() => {
-    navigator.geolocation.getCurrentPosition(
+    navigator.geolocation.watchPosition(
       (position) => {
         setUserLocation({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
         });
       },
-      (error) => {
-        console.error("Error getting user location:", error);
-      }
+      (error) => console.error("Error watching user location:", error)
     );
   }, []);
 
   const handleLogin = async () => {
     try {
+      setGapiError(null);
       setIsLoading(true);
       const user = await gmailService.signIn();
       setCurrentUser(user);
-      const userEmails = await gmailService.listEmails();
+      const [userEmails, userEvents] = await Promise.all([
+        gmailService.fetchEmails(4),
+        gmailService.fetchCalendarEvents()
+      ]);
       setEmails(userEmails);
-    } catch (error) {
+      setCalendarEvents(userEvents);
+    } catch (error: any) {
       console.error("Login failed:", error);
-      setGapiError("An error occurred during sign-in.");
+      setGapiError(error.message || "An error occurred during sign-in.");
     } finally {
       setIsLoading(false);
     }
@@ -65,7 +109,10 @@ const App: React.FC = () => {
     setCurrentUser(null);
     setActiveSessionId(null);
     setSessions([]);
+    setBookings([]);
     setEmails([]);
+    setCalendarEvents([]);
+    localStorage.clear();
   };
 
   const handleCreateSession = (name: string): string => {
@@ -76,6 +123,7 @@ const App: React.FC = () => {
       participants: [currentUser],
       state: 'PENDING',
       readyStatus: { [currentUser.id]: 'PENDING' },
+      excludedSlots: [],
     };
     setSessions(prev => [...prev, newSession]);
     return newSession.id;
@@ -91,8 +139,6 @@ const App: React.FC = () => {
       }
       return prevSessions.map(s => {
         if (s.id === sessionId && !s.participants.some(p => p.id === currentUser.id)) {
-          // In a real app, you'd fetch the session details
-          // For this mock, we'll just add the current user if they aren't in it.
            return {
               ...s,
               participants: [...s.participants, currentUser],
@@ -105,57 +151,46 @@ const App: React.FC = () => {
     handleViewSession(sessionId);
   };
   
-  const handleViewSession = (sessionId: string) => {
-    setActiveSessionId(sessionId);
-  };
-
-  const handleBackToDashboard = () => {
-    setActiveSessionId(null);
-  };
+  const handleViewSession = (sessionId: string) => setActiveSessionId(sessionId);
+  const handleBackToDashboard = () => setActiveSessionId(null);
   
   const runSchedulingAgent = useCallback(async (session: Session) => {
-    console.log(`[App] All users ready for session "${session.name}". Running scheduling agent...`);
-    
-    // 1. Set state to PLANNING
+    if (!currentUser) return;
     setSessions(prev => prev.map(s => s.id === session.id ? { ...s, state: 'PLANNING' } : s));
 
-    // 2. Gather data for Gemini
-    const participantIds = session.participants.map(p => p.id);
-    const calendars = Object.fromEntries(
-        Object.entries(MOCK_CALENDARS).filter(([userId]) => participantIds.includes(userId))
-    );
+    const participantCalendars = MOCK_USERS
+      .filter(u => session.participants.some(p => p.id === u.id && u.id !== currentUser.id))
+      .reduce((acc, user) => ({ ...acc, [user.id]: MOCK_CALENDARS[user.id] || [] }), {});
+    
+    const allCalendars = {
+        ...participantCalendars,
+        [currentUser.id]: calendarEvents,
+    };
 
-    // 3. Call Gemini service
     const proposalData = await geminiService.findBestMeetingTime(
-        session.participants,
-        calendars,
-        AVAILABLE_ROOMS
+      session.participants,
+      allCalendars,
+      AVAILABLE_ROOMS,
+      bookings,
+      userLocation,
+      session.excludedSlots
     );
 
-    // 4. Update session with proposal
     if (proposalData) {
         const room = AVAILABLE_ROOMS.find(r => r.id === proposalData.roomId);
         if (room) {
             setSessions(prev => prev.map(s => s.id === session.id ? {
                 ...s,
                 state: 'PROPOSED',
-                proposal: {
-                    room,
-                    startTime: proposalData.startTime,
-                    endTime: proposalData.endTime,
-                    reasoning: proposalData.reasoning,
-                    responses: {}, // Clear previous responses
-                }
+                proposal: { room, ...proposalData, responses: {} }
             } : s));
         } else {
-             console.error("Gemini proposed a room that doesn't exist:", proposalData.roomId);
              setSessions(prev => prev.map(s => s.id === session.id ? { ...s, state: 'CANCELED' } : s));
         }
     } else {
-        console.error("Failed to get proposal from Gemini.");
         setSessions(prev => prev.map(s => s.id === session.id ? { ...s, state: 'CANCELED' } : s));
     }
-  }, []);
+  }, [currentUser, calendarEvents, userLocation, bookings]);
 
   const handleSetReady = (sessionId: string, userId: string, status: 'READY' | 'PENDING') => {
     setSessions(prev => {
@@ -164,13 +199,7 @@ const App: React.FC = () => {
           const newReadyStatus = { ...s.readyStatus, [userId]: status };
           const updatedSession = { ...s, readyStatus: newReadyStatus };
 
-          // Check if all participants are now ready
-          const allReady = updatedSession.participants.every(
-            p => newReadyStatus[p.id] === 'READY'
-          );
-
-          if (allReady) {
-            // Trigger agent asynchronously
+          if (updatedSession.participants.every(p => newReadyStatus[p.id] === 'READY')) {
             setTimeout(() => runSchedulingAgent(updatedSession), 0);
           }
           return updatedSession;
@@ -183,44 +212,44 @@ const App: React.FC = () => {
   
   const handleProposalResponse = (sessionId: string, userId: string, accepted: boolean) => {
      setSessions(prev => {
-         const newSessions = prev.map(s => {
+         return prev.map(s => {
              if (s.id === sessionId && s.proposal) {
                  const newResponses = { ...s.proposal.responses, [userId]: accepted };
-                 const updatedSession = {
-                     ...s,
-                     proposal: { ...s.proposal, responses: newResponses }
-                 };
+                 let updatedSession = { ...s, proposal: { ...s.proposal, responses: newResponses } };
 
-                 // Check if all participants have responded
-                 const allResponded = updatedSession.participants.every(p => newResponses[p.id] !== undefined);
+                 if (!accepted) {
+                     // Reschedule immediately if anyone declines
+                     updatedSession.state = 'PENDING';
+                     const rejectedSlot = { startTime: s.proposal.startTime, endTime: s.proposal.endTime };
+                     updatedSession.excludedSlots = [...(s.excludedSlots || []), rejectedSlot];
+                     // Reset ready status to require a new handshake
+                     updatedSession.participants.forEach(p => { updatedSession.readyStatus[p.id] = 'PENDING'; });
+                     console.log(`[App] Proposal declined. Adding slot to exclusion list and resetting.`);
+                     // The new "PENDING" state allows users to re-confirm readiness for a new search
+                     return updatedSession;
+                 }
                  
+                 const allResponded = updatedSession.participants.every(p => newResponses[p.id] !== undefined);
                  if (allResponded) {
                      const allAccepted = updatedSession.participants.every(p => newResponses[p.id] === true);
                      if (allAccepted) {
-                         // Book the room!
                          updatedSession.state = 'CONFIRMED';
-                         bookingService.bookRoom(updatedSession.proposal!.room, updatedSession.proposal!.startTime, updatedSession.proposal!.endTime, updatedSession.participants);
-                     } else {
-                         updatedSession.state = 'CANCELED';
+                         const newBooking = bookingService.bookRoom(s.proposal!.room, s.proposal!.startTime, s.proposal!.endTime, s.participants);
+                         if (newBooking) setBookings(prevB => [...prevB, newBooking]);
                      }
                  }
                  return updatedSession;
              }
              return s;
          });
-         return newSessions;
      });
   };
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
 
   const renderContent = () => {
-    if (isLoading && !isGapiLoaded) {
-      return (
-        <div className="flex items-center justify-center min-h-screen">
-          <DottedLoader />
-        </div>
-      );
+    if (isLoading && !currentUser) { // Only show full-screen loader on initial load
+      return <div className="flex items-center justify-center min-h-screen"><DottedLoader /></div>;
     }
     if (!currentUser) {
       return <LoginScreen onLogin={handleLogin} isGapiLoaded={isGapiLoaded} gapiError={gapiError} />;
@@ -228,14 +257,12 @@ const App: React.FC = () => {
     if (activeSession) {
       return <SessionDetail session={activeSession} currentUser={currentUser} userLocation={userLocation} onBack={handleBackToDashboard} onSetReady={handleSetReady} onProposalResponse={handleProposalResponse} />;
     }
-    return <Dashboard currentUser={currentUser} sessions={sessions} userLocation={userLocation} emails={emails} onCreateSession={handleCreateSession} onJoinSession={handleJoinSession} onViewSession={handleViewSession} onLogout={handleLogout} />;
+    return <Dashboard currentUser={currentUser} sessions={sessions} userLocation={userLocation} emails={emails} calendarEvents={calendarEvents} onCreateSession={handleCreateSession} onJoinSession={handleJoinSession} onViewSession={handleViewSession} onLogout={handleLogout} />;
   }
 
   return (
     <div className="bg-gray-900 text-white min-h-screen p-4 sm:p-6 lg:p-8">
-        <div className="max-w-7xl mx-auto">
-            {renderContent()}
-        </div>
+        <div className="max-w-7xl mx-auto">{renderContent()}</div>
     </div>
   );
 };

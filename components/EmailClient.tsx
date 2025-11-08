@@ -6,10 +6,8 @@ interface EmailClientProps {
 }
 
 const EmailClient: React.FC<EmailClientProps> = ({ emails }) => {
-
   return (
     <div className="bg-gray-800 p-4 rounded-lg shadow-lg">
-      <h2 className="text-2xl font-semibold mb-4">Your Inbox</h2>
       <div className="space-y-2 max-h-[65vh] overflow-y-auto pr-2">
         {emails.length > 0 ? (
           emails.map(email => (
@@ -23,7 +21,7 @@ const EmailClient: React.FC<EmailClientProps> = ({ emails }) => {
             </div>
           ))
         ) : (
-          <p className="text-gray-400 text-center py-8">Inbox is empty or still loading.</p>
+          <p className="text-gray-400 text-center py-8">No recent emails found in your inbox.</p>
         )}
       </div>
     </div>

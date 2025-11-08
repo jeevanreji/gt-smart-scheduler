@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Session, User, Location } from '../types';
-// FIX: Import the renamed MapComponent.
 import MapComponent from './Map';
 import { UserIcon } from './icons/UserIcon';
 import { BuildingIcon } from './icons/BuildingIcon';
@@ -53,16 +52,17 @@ const SessionDetail: React.FC<SessionDetailProps> = ({ session, currentUser, use
       {session.state === 'CONFIRMED' && proposal && (
           <div className="bg-green-900 border border-green-500 p-6 rounded-lg shadow-lg text-center">
               <h2 className="text-2xl font-bold text-green-300">✅ Meeting Confirmed!</h2>
-              <p className="text-lg mt-2">
-                  {proposal.room.name}, {proposal.room.building}
-              </p>
+              <p className="text-lg mt-2">{proposal.room.name}, {proposal.room.building}</p>
               <p className="text-gray-300 mt-1">
                   {new Date(proposal.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - 
                   {new Date(proposal.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </p>
               <div className="mt-4 h-64 rounded-lg overflow-hidden">
-                {/* FIX: Use the renamed MapComponent. */}
-                <MapComponent center={proposal.room.location} highlight={proposal.room.location} userLocation={userLocation} />
+                <MapComponent 
+                    center={proposal.room.location} 
+                    userLocation={userLocation}
+                    directions={userLocation ? { origin: userLocation, destination: proposal.room.location } : undefined}
+                />
               </div>
           </div>
       )}
@@ -79,7 +79,6 @@ const SessionDetail: React.FC<SessionDetailProps> = ({ session, currentUser, use
             </p>
           </div>
           <div className="mt-4 h-64 rounded-lg overflow-hidden">
-            {/* FIX: Use the renamed MapComponent. */}
             <MapComponent center={proposal.room.location} highlight={proposal.room.location} userLocation={userLocation} />
           </div>
           {!userHasResponded ? (
@@ -122,7 +121,6 @@ const SessionDetail: React.FC<SessionDetailProps> = ({ session, currentUser, use
            <div className="flex-grow space-y-4">
                 <h2 className="text-xl font-semibold mb-2 flex items-center gap-2"><BuildingIcon /> Campus Map</h2>
                 <div className="h-64 md:h-80 rounded-lg overflow-hidden border border-gray-700">
-                    {/* FIX: Use the renamed MapComponent. */}
                     <MapComponent center={userLocation || centerOfGT} userLocation={userLocation} zoom={15.5} />
                 </div>
            </div>
@@ -131,7 +129,7 @@ const SessionDetail: React.FC<SessionDetailProps> = ({ session, currentUser, use
                  <>
                   <h2 className="text-xl font-semibold mb-4">Ready to Schedule?</h2>
                   <p className="text-gray-400 mb-6 text-center">
-                    When everyone is ready, the Coordinator Agent will start finding the best time and place to meet.
+                    When everyone is ready, the Coordinator Agent will find the best time to meet. If a proposal is declined, you can come back here to try again.
                   </p>
                   <button
                     onClick={handleReadyToggle}
@@ -141,13 +139,21 @@ const SessionDetail: React.FC<SessionDetailProps> = ({ session, currentUser, use
                   </button>
                  </>
                )}
-               {session.state !== 'PENDING' && (
+               {session.state !== 'PENDING' && session.state !== 'CANCELED' && (
                  <div className="text-center">
                     <h2 className="text-xl font-semibold mb-4">Agent Status: {session.state}</h2>
                     <p className="text-gray-400">
                         { session.state === 'PLANNING' && 'The agent is currently analyzing schedules and finding the best slot.' }
                         { session.state === 'PROPOSED' && 'A proposal has been sent. Please check above and respond.' }
                         { session.state === 'CONFIRMED' && 'Your meeting is booked! Details are shown above.' }
+                    </p>
+                 </div>
+               )}
+                {session.state === 'CANCELED' && (
+                 <div className="text-center">
+                    <h2 className="text-xl font-semibold mb-4 text-red-400">Scheduling Canceled</h2>
+                    <p className="text-gray-400">
+                        The proposal was declined or the agent could not find a suitable slot. You can try again by setting everyone to "Ready".
                     </p>
                  </div>
                )}
