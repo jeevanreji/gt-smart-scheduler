@@ -1,120 +1,96 @@
-import { GoogleGenAI, Type } from '@google/genai';
-import { Room, CalendarEvent, Proposal } from '../types';
+import { GoogleGenAI, Type } from "@google/genai";
+import { User, CalendarEvent, Room } from '../types';
 
-// Initialize AI client only if API key is available
-const ai = process.env.API_KEY ? new GoogleGenAI({ apiKey: process.env.API_KEY }) : null;
-
-if (!ai) {
-  console.warn("API_KEY environment variable not set. Gemini API calls will be disabled.");
+if (!process.env.API_KEY) {
+  // A default key is provided for demo purposes, but it's recommended to use your own.
+  console.warn("API_KEY environment variable is not set. Using a default key.");
 }
 
-interface ParticipantAvailability {
-  userId: string;
-  name: string;
-  calendar: CalendarEvent[];
-}
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || 'default-api-key' });
 
-const generatePrompt = (participants: ParticipantAvailability[], rooms: Room[]): string => {
-  const today = new Date();
-  const dateString = today.toDateString();
-  const currentTime = today.toTimeString().split(' ')[0];
-
-  const participantData = participants.map(p => `
-- User: ${p.name} (ID: ${p.userId})
-  Current Schedule (${dateString}):
-  ${p.calendar.length > 0 ? p.calendar.map(e => `  - ${e.title} (${new Date(e.startTime).toLocaleTimeString()} - ${new Date(e.endTime).toLocaleTimeString()}), Priority: ${e.priority}`).join('\n') : '  - No scheduled events.'}
-  `).join('');
-
-  const roomData = rooms.map(r => `
-- Room: ${r.name} at ${r.building} (ID: ${r.id})
-  Capacity: ${r.capacity}
-  Location Coords: { lat: ${r.location.lat}, lng: ${r.location.lng} }
-  `).join('');
-
-  return `
-You are an expert, autonomous scheduling agent for Georgia Tech students. Your goal is to find the single best 1-hour meeting slot for a group of students today.
-
-Current Date: ${dateString}
-Current Time: ${currentTime}
-Booking Hours: You can only book slots between 10:00 AM - 12:00 PM and 1:00 PM - 8:00 PM.
-
-Analyze the following data:
-
-1. PARTICIPANTS AND THEIR SCHEDULES:
-${participantData}
-
-2. AVAILABLE ROOMS:
-${roomData}
-
-YOUR TASK:
-Based on all the provided data, determine the optimal 1-hour meeting time and location. 
-
-Follow these reasoning steps:
-1.  Identify common free time slots for ALL participants, respecting their existing HIGH priority events. LOW and MEDIUM priority events can be considered flexible if necessary, but avoiding them is better.
-2.  From the common slots, select the one that is soonest but allows for reasonable travel time (assume students are on campus).
-3.  Choose a room that is centrally located relative to the participants' likely locations (you don't have their live location, so make a logical guess based on building names like Klaus, Library, etc.). The room must have enough capacity.
-4.  Formulate a concise reasoning for your choice.
-
-Your final output must be a JSON object matching the provided schema. Do not include any text outside the JSON object.
-`;
+// Define the expected JSON schema for the model's response
+const meetingProposalSchema = {
+  type: Type.OBJECT,
+  properties: {
+    startTime: {
+      type: Type.STRING,
+      description: 'The proposed start time for the meeting in ISO 8601 format.',
+    },
+    endTime: {
+      type: Type.STRING,
+      description: 'The proposed end time for the meeting in ISO 8601 format.',
+    },
+    roomId: {
+      type: Type.STRING,
+      description: 'The ID of the chosen room from the provided list of available rooms.',
+    },
+    reasoning: {
+      type: Type.STRING,
+      description: 'A brief, friendly explanation for why this specific time and room were chosen, considering participant schedules and room locations.',
+    },
+  },
+  required: ['startTime', 'endTime', 'roomId', 'reasoning'],
 };
 
-export const findOptimalSlot = async (participants: ParticipantAvailability[], rooms: Room[]): Promise<Proposal | null> => {
-  if (!ai) {
-    console.error("Gemini API key not configured. Cannot find optimal slot.");
-    // Return a mock proposal for UI testing if API key is missing
-    return new Promise(resolve => setTimeout(() => {
-        const mockRoom = rooms[0];
-        const startTime = new Date();
-        startTime.setHours(startTime.getHours() + 1);
-        const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
-        resolve({
-            room: mockRoom,
-            startTime: startTime.toISOString(),
-            endTime: endTime.toISOString(),
-            reasoning: "This is a mock proposal because the Gemini API key is not configured.",
-            responses: {}
-        });
-    }, 1500));
-  }
+interface MeetingProposalResponse {
+  startTime: string;
+  endTime: string;
+  roomId: string;
+  reasoning: string;
+}
 
-  const prompt = generatePrompt(participants, rooms);
+/**
+ * Uses the Gemini API to find the optimal meeting time and location.
+ */
+export const findBestMeetingTime = async (
+  participants: User[],
+  calendars: Record<string, CalendarEvent[]>,
+  availableRooms: Room[],
+  meetingDurationMinutes: number = 60
+): Promise<MeetingProposalResponse | null> => {
+  const today = new Date();
+  const prompt = `
+    You are a smart scheduling assistant for students at Georgia Tech. Your task is to find the best possible time and location for a study session.
 
+    Here is the required information:
+    - Today's Date: ${today.toISOString()}
+    - Meeting Duration: ${meetingDurationMinutes} minutes
+    - Participants: ${JSON.stringify(participants.map(p => ({ id: p.id, name: p.name })), null, 2)}
+    - Participant Schedules (events they are busy): ${JSON.stringify(calendars, null, 2)}
+    - Available Study Rooms: ${JSON.stringify(availableRooms, null, 2)}
+
+    Your goal is to find a ${meetingDurationMinutes}-minute slot today that works for all participants and book a suitable room.
+
+    Constraints and Preferences:
+    1.  The meeting must not conflict with any participant's existing calendar events.
+    2.  The chosen room must have enough capacity for all participants.
+    3.  Consider a reasonable time, ideally between 9:00 AM and 8:00 PM today, in the local timezone.
+    4.  Try to find a time as soon as possible.
+    5.  The reasoning should be concise and helpful.
+
+    Please provide your answer in JSON format that adheres to the specified schema.
+    `;
+  
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-pro',
+      model: 'gemini-2.5-pro', // Using a powerful model for complex reasoning
       contents: prompt,
       config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            roomId: { type: Type.STRING },
-            startTime: { type: Type.STRING, description: "The start time of the meeting in ISO 8601 format." },
-            endTime: { type: Type.STRING, description: "The end time of the meeting in ISO 8601 format." },
-            reasoning: { type: Type.STRING, description: "A brief explanation for why this slot was chosen." }
-          },
-          required: ["roomId", "startTime", "endTime", "reasoning"]
-        }
-      }
+        responseMimeType: "application/json",
+        responseSchema: meetingProposalSchema,
+      },
     });
 
-    const jsonString = response.text;
-    const result = JSON.parse(jsonString);
-
-    const chosenRoom = rooms.find(r => r.id === result.roomId);
-    if (!chosenRoom) {
-      console.error("Gemini chose a room that doesn't exist:", result.roomId);
-      return null;
+    const jsonText = response.text.trim();
+    const proposal: MeetingProposalResponse = JSON.parse(jsonText);
+    
+    // Basic validation
+    if (!proposal.roomId || !proposal.startTime || !proposal.endTime) {
+        console.error("Invalid proposal received from Gemini:", proposal);
+        return null;
     }
 
-    return {
-      room: chosenRoom,
-      startTime: result.startTime,
-      endTime: result.endTime,
-      reasoning: result.reasoning,
-      responses: {}
-    };
+    return proposal;
 
   } catch (error) {
     console.error("Error calling Gemini API:", error);

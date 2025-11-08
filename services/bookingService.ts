@@ -1,53 +1,33 @@
-import { Room, Booking } from '../types';
-import { AVAILABLE_ROOMS } from '../constants';
+import { Room, User } from "../types";
 
-// In-memory store for bookings, can be synced from persistent storage.
-let bookings: Booking[] = [];
-
-/**
- * Sets the entire list of bookings, used for initializing from storage.
- * @param storedBookings The bookings loaded from a persistent source.
- */
-export const setBookings = (storedBookings: Booking[]) => {
-  bookings = storedBookings;
-};
+// This is a mock service to simulate booking a room.
+// In a real application, this would interact with a calendar or booking API.
 
 /**
- * Finds available rooms based on capacity and booking rules.
- * @param now The current time to start checking from.
- * @param requiredCapacity The number of people the room must hold.
- * @returns An array of available rooms.
- */
-export const getAvailableRooms = (now: Date, requiredCapacity: number): Room[] => {
-  const validRooms = AVAILABLE_ROOMS.filter(room => room.capacity >= requiredCapacity);
-  
-  // Filter out rooms that are booked within the next few hours to simplify logic.
-  // A real implementation would check specific time slots.
-  const bookedRoomIds = new Set(
-    bookings
-      .filter(booking => booking.startTime > now)
-      .map(b => b.roomId)
-  );
-
-  return validRooms.filter(room => !bookedRoomIds.has(room.id));
-};
-
-/**
- * Creates a new booking and adds it to the in-memory store.
- * @param sessionId The session ID for the booking.
- * @param roomId The ID of the room being booked.
+ * "Books" a room by logging the action.
+ * @param room The room to book.
  * @param startTime The start time of the booking.
  * @param endTime The end time of the booking.
- * @returns The newly created booking object.
+ * @param attendees The users attending the meeting.
+ * @returns A promise that resolves with a mock booking confirmation.
  */
-export const createBooking = (sessionId: string, roomId: string, startTime: Date, endTime: Date): Booking => {
-  const newBooking: Booking = {
-    id: `booking-${Date.now()}`,
-    sessionId,
-    roomId,
-    startTime,
-    endTime,
-  };
-  bookings.push(newBooking);
-  return newBooking;
+export const bookRoom = async (
+  room: Room, 
+  startTime: string, 
+  endTime: string, 
+  attendees: User[]
+): Promise<{ success: boolean; bookingId: string }> => {
+  const attendeeEmails = attendees.map(a => a.email).join(', ');
+  console.log(
+    `[Booking Service] Attempting to book room: "${room.name}" in "${room.building}"\n` +
+    `From: ${new Date(startTime).toLocaleString()}\n` +
+    `To:   ${new Date(endTime).toLocaleString()}\n` +
+    `For:  ${attendeeEmails}`
+  );
+  
+  // Simulate a network delay
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  
+  console.log('[Booking Service] Mock booking successful!');
+  return { success: true, bookingId: `mock-booking-${Date.now()}` };
 };
