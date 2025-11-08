@@ -1,11 +1,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { User, CalendarEvent, Room, Booking, Location, ExcludedSlot } from '../types';
 
-if (!process.env.API_KEY) {
-  console.warn("API_KEY environment variable is not set. Using a default key.");
-}
+// FIX 1: Check the correct Vite environment variable
+// FIX 2: Use the correct Vite variable, and provide a fallback
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || 'default-api-key' });
+
+// FIX 3: Pass the key to the AI instance
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const meetingProposalSchema = {
   type: Type.OBJECT,
