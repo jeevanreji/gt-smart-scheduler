@@ -3,7 +3,7 @@ import LoginScreen from './components/LoginScreen';
 import Dashboard from './components/Dashboard';
 import SessionDetail from './components/SessionDetail';
 import { User, Session, Location, Email, CalendarEvent, Booking } from './types';
-import { MOCK_USERS, MOCK_CALENDARS, AVAILABLE_ROOMS } from './constants';
+import { MOCK_CALENDARS, AVAILABLE_ROOMS } from './constants';
 import * as gmailService from './services/gmailService';
 import * as geminiService from './services/geminiService';
 import * as bookingService from './services/bookingService';
@@ -40,8 +40,7 @@ const App: React.FC = () => {
         await gmailService.initClient();
         setIsGapiLoaded(true);
         if (currentUser) {
-            // If user is already logged in from localStorage, refresh their token and data
-            const refreshedUser = await gmailService.signIn(true); // Attempt silent sign-in
+            const refreshedUser = await gmailService.signIn(true);
             setCurrentUser(refreshedUser);
             const [userEmails, userEvents] = await Promise.all([
               gmailService.fetchEmails(4),
@@ -53,41 +52,49 @@ const App: React.FC = () => {
       } catch (error: any) {
         console.error("GAPI Init Error:", error);
         setGapiError(error.message || "Failed to initialize Google Services.");
-        // If silent sign-in fails, log the user out
-        if(currentUser){
-            handleLogout();
+        if (!error.message.includes("cancelled")) { // Don't clear user if they just closed the popup
+            setCurrentUser(null);
+            localStorage.removeItem('currentUser');
         }
       } finally {
         setIsLoading(false);
       }
     };
     initGoogleClient();
-  }, []); // Run only once on mount
+  }, []); // Run only on initial mount
 
-  // Persist state to localStorage
+  // Watch for location
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.watchPosition(
+        (position) => {
+          setUserLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          });
+        },
+        (error) => console.error("Geolocation error:", error),
+        { enableHighAccuracy: true }
+      );
+    }
+  }, []);
+
+  // Save state to localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
-    localStorage.setItem('sessions', JSON.stringify(sessions));
-    localStorage.setItem('bookings', JSON.stringify(bookings));
-  }, [currentUser, sessions, bookings]);
+  }, [currentUser]);
 
-  // Get user location
   useEffect(() => {
-    navigator.geolocation.watchPosition(
-      (position) => {
-        setUserLocation({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
-      },
-      (error) => console.error("Error watching user location:", error)
-    );
-  }, []);
+    localStorage.setItem('sessions', JSON.stringify(sessions));
+  }, [sessions]);
+
+  useEffect(() => {
+    localStorage.setItem('bookings', JSON.stringify(bookings));
+    bookingService.init(bookings); // Keep the service in sync
+  }, [bookings]);
 
   const handleLogin = async () => {
     try {
-      setGapiError(null);
-      setIsLoading(true);
       const user = await gmailService.signIn();
       setCurrentUser(user);
       const [userEmails, userEvents] = await Promise.all([
@@ -98,21 +105,18 @@ const App: React.FC = () => {
       setCalendarEvents(userEvents);
     } catch (error: any) {
       console.error("Login failed:", error);
-      setGapiError(error.message || "An error occurred during sign-in.");
-    } finally {
-      setIsLoading(false);
+      alert(error.message);
     }
   };
 
-  const handleLogout = async () => {
-    await gmailService.signOut();
+  const handleLogout = () => {
+    gmailService.signOut();
     setCurrentUser(null);
-    setActiveSessionId(null);
-    setSessions([]);
-    setBookings([]);
     setEmails([]);
     setCalendarEvents([]);
-    localStorage.clear();
+    setActiveSessionId(null);
+    // Only remove the user, keep sessions and bookings persistent
+    localStorage.removeItem('currentUser');
   };
 
   const handleCreateSession = (name: string): string => {
@@ -128,141 +132,182 @@ const App: React.FC = () => {
     setSessions(prev => [...prev, newSession]);
     return newSession.id;
   };
-  
+
   const handleJoinSession = (sessionId: string) => {
     if (!currentUser) return;
-    setSessions(prevSessions => {
-      const sessionExists = prevSessions.some(s => s.id === sessionId);
-      if (!sessionExists) {
-        alert("Session ID not found!");
-        return prevSessions;
+    setSessions(prev => prev.map(s => {
+      if (s.id === sessionId && !s.participants.some(p => p.id === currentUser.id)) {
+        return {
+          ...s,
+          participants: [...s.participants, currentUser],
+          readyStatus: { ...s.readyStatus, [currentUser.id]: 'PENDING' },
+        };
       }
-      return prevSessions.map(s => {
-        if (s.id === sessionId && !s.participants.some(p => p.id === currentUser.id)) {
-           return {
-              ...s,
-              participants: [...s.participants, currentUser],
-              readyStatus: { ...s.readyStatus, [currentUser.id]: 'PENDING' }
-           };
-        }
-        return s;
-      });
-    });
-    handleViewSession(sessionId);
+      return s;
+    }));
   };
   
-  const handleViewSession = (sessionId: string) => setActiveSessionId(sessionId);
-  const handleBackToDashboard = () => setActiveSessionId(null);
-  
-  const runSchedulingAgent = useCallback(async (session: Session) => {
-    if (!currentUser) return;
+  const scheduleMeeting = useCallback(async (session: Session) => {
+    if (!session || !currentUser) return;
+
     setSessions(prev => prev.map(s => s.id === session.id ? { ...s, state: 'PLANNING' } : s));
-
-    const participantCalendars = MOCK_USERS
-      .filter(u => session.participants.some(p => p.id === u.id && u.id !== currentUser.id))
-      .reduce((acc, user) => ({ ...acc, [user.id]: MOCK_CALENDARS[user.id] || [] }), {});
     
-    const allCalendars = {
-        ...participantCalendars,
-        [currentUser.id]: calendarEvents,
-    };
+    const calendars = session.participants.reduce((acc, p) => {
+      if (p.id === currentUser.id) {
+        acc[p.id] = calendarEvents;
+      } else {
+        // For other users, we rely on mock data as we can't access their private calendars
+        acc[p.id] = MOCK_CALENDARS[p.id] || [];
+      }
+      return acc;
+    }, {} as Record<string, CalendarEvent[]>);
 
-    const proposalData = await geminiService.findBestMeetingTime(
+    const proposalResponse = await geminiService.findBestMeetingTime(
       session.participants,
-      allCalendars,
+      calendars,
       AVAILABLE_ROOMS,
       bookings,
       userLocation,
       session.excludedSlots
     );
 
-    if (proposalData) {
-        const room = AVAILABLE_ROOMS.find(r => r.id === proposalData.roomId);
-        if (room) {
-            setSessions(prev => prev.map(s => s.id === session.id ? {
-                ...s,
-                state: 'PROPOSED',
-                proposal: { room, ...proposalData, responses: {} }
-            } : s));
-        } else {
-             setSessions(prev => prev.map(s => s.id === session.id ? { ...s, state: 'CANCELED' } : s));
-        }
+    if (proposalResponse) {
+      const proposedRoom = AVAILABLE_ROOMS.find(r => r.id === proposalResponse.roomId);
+      if (proposedRoom) {
+        setSessions(prev => prev.map(s => s.id === session.id ? {
+          ...s,
+          state: 'PROPOSED',
+          proposal: {
+            room: proposedRoom,
+            startTime: proposalResponse.startTime,
+            endTime: proposalResponse.endTime,
+            reasoning: proposalResponse.reasoning,
+            responses: {},
+          }
+        } : s));
+      } else {
+         setSessions(prev => prev.map(s => s.id === session.id ? { ...s, state: 'CANCELED' } : s));
+      }
     } else {
-        setSessions(prev => prev.map(s => s.id === session.id ? { ...s, state: 'CANCELED' } : s));
+      setSessions(prev => prev.map(s => s.id === session.id ? { ...s, state: 'CANCELED' } : s));
     }
-  }, [currentUser, calendarEvents, userLocation, bookings]);
+  }, [currentUser, calendarEvents, bookings, userLocation]);
 
-  const handleSetReady = (sessionId: string, userId: string, status: 'READY' | 'PENDING') => {
+  const handleSetReady = useCallback((sessionId: string, userId: string, status: 'READY' | 'PENDING') => {
     setSessions(prev => {
       const newSessions = prev.map(s => {
         if (s.id === sessionId) {
-          const newReadyStatus = { ...s.readyStatus, [userId]: status };
-          const updatedSession = { ...s, readyStatus: newReadyStatus };
-
-          if (updatedSession.participants.every(p => newReadyStatus[p.id] === 'READY')) {
-            setTimeout(() => runSchedulingAgent(updatedSession), 0);
-          }
-          return updatedSession;
+          return { ...s, readyStatus: { ...s.readyStatus, [userId]: status } };
         }
         return s;
       });
+
+      const updatedSession = newSessions.find(s => s.id === sessionId);
+      if (updatedSession) {
+        const allReady = updatedSession.participants.every(p => updatedSession.readyStatus[p.id] === 'READY');
+        if (allReady && updatedSession.state === 'PENDING') {
+          scheduleMeeting(updatedSession);
+        }
+      }
       return newSessions;
     });
-  };
-  
-  const handleProposalResponse = (sessionId: string, userId: string, accepted: boolean) => {
-     setSessions(prev => {
-         return prev.map(s => {
-             if (s.id === sessionId && s.proposal) {
-                 const newResponses = { ...s.proposal.responses, [userId]: accepted };
-                 let updatedSession = { ...s, proposal: { ...s.proposal, responses: newResponses } };
+  }, [scheduleMeeting]);
 
-                 if (!accepted) {
-                     // Reschedule immediately if anyone declines
-                     updatedSession.state = 'PENDING';
-                     const rejectedSlot = { startTime: s.proposal.startTime, endTime: s.proposal.endTime };
-                     updatedSession.excludedSlots = [...(s.excludedSlots || []), rejectedSlot];
-                     // Reset ready status to require a new handshake
-                     updatedSession.participants.forEach(p => { updatedSession.readyStatus[p.id] = 'PENDING'; });
-                     console.log(`[App] Proposal declined. Adding slot to exclusion list and resetting.`);
-                     // The new "PENDING" state allows users to re-confirm readiness for a new search
-                     return updatedSession;
-                 }
-                 
-                 const allResponded = updatedSession.participants.every(p => newResponses[p.id] !== undefined);
-                 if (allResponded) {
-                     const allAccepted = updatedSession.participants.every(p => newResponses[p.id] === true);
-                     if (allAccepted) {
-                         updatedSession.state = 'CONFIRMED';
-                         const newBooking = bookingService.bookRoom(s.proposal!.room, s.proposal!.startTime, s.proposal!.endTime, s.participants);
-                         if (newBooking) setBookings(prevB => [...prevB, newBooking]);
-                     }
-                 }
-                 return updatedSession;
-             }
-             return s;
-         });
-     });
+  const handleProposalResponse = (sessionId: string, userId: string, accepted: boolean) => {
+    let sessionToReschedule: Session | null = null;
+    
+    setSessions(prevSessions => {
+      // 1. Update the response for the current user
+      const sessionsWithResponse = prevSessions.map(s => {
+        if (s.id === sessionId && s.proposal) {
+          return { ...s, proposal: { ...s.proposal, responses: { ...s.proposal.responses, [userId]: accepted } } };
+        }
+        return s;
+      });
+
+      const updatedSession = sessionsWithResponse.find(s => s.id === sessionId);
+      if (!updatedSession?.proposal) return sessionsWithResponse;
+
+      const allResponded = updatedSession.participants.every(p => updatedSession.proposal?.responses[p.id] !== undefined);
+      if (!allResponded) return sessionsWithResponse;
+
+      // 2. All have responded, now decide the outcome
+      const allAccepted = updatedSession.participants.every(p => updatedSession.proposal?.responses[p.id] === true);
+      
+      if (allAccepted) {
+        const newBooking = bookingService.bookRoom(
+            updatedSession.proposal.room,
+            updatedSession.proposal.startTime,
+            updatedSession.proposal.endTime,
+            updatedSession.participants
+        );
+        if (newBooking) {
+            setBookings(prevBookings => [...prevBookings, newBooking]);
+            return sessionsWithResponse.map(s => s.id === sessionId ? { ...s, state: 'CONFIRMED' } : s);
+        } else {
+            // Fails if booking conflict happens last minute (rare but possible)
+            // Fall through to reschedule logic
+        }
+      } 
+      
+      // 3. If not all accepted (or booking failed), we must reschedule
+      const rejectedSlot = { startTime: updatedSession.proposal.startTime, endTime: updatedSession.proposal.endTime };
+      const sessionForNextRound = { 
+        ...updatedSession, 
+        state: 'PLANNING' as const,
+        proposal: undefined,
+        excludedSlots: [...updatedSession.excludedSlots, rejectedSlot],
+        // CRITICAL: Reset readiness to prevent immediate re-scheduling loop
+        readyStatus: updatedSession.participants.reduce((acc, p) => ({...acc, [p.id]: 'PENDING'}), {}),
+      };
+      sessionToReschedule = sessionForNextRound;
+      return sessionsWithResponse.map(s => s.id === sessionId ? sessionForNextRound : s);
+    });
+
+    if (sessionToReschedule) {
+        scheduleMeeting(sessionToReschedule);
+    }
   };
+
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
+  
+  if (isLoading) {
+    return <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900"><DottedLoader /><p className="mt-4 text-gray-400">Initializing Google Services...</p></div>;
+  }
+  
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleLogin} isGapiLoaded={isGapiLoaded} gapiError={gapiError} />;
+  }
 
-  const renderContent = () => {
-    if (isLoading && !currentUser) { // Only show full-screen loader on initial load
-      return <div className="flex items-center justify-center min-h-screen"><DottedLoader /></div>;
-    }
-    if (!currentUser) {
-      return <LoginScreen onLogin={handleLogin} isGapiLoaded={isGapiLoaded} gapiError={gapiError} />;
-    }
-    if (activeSession) {
-      return <SessionDetail session={activeSession} currentUser={currentUser} userLocation={userLocation} onBack={handleBackToDashboard} onSetReady={handleSetReady} onProposalResponse={handleProposalResponse} />;
-    }
-    return <Dashboard currentUser={currentUser} sessions={sessions} userLocation={userLocation} emails={emails} calendarEvents={calendarEvents} onCreateSession={handleCreateSession} onJoinSession={handleJoinSession} onViewSession={handleViewSession} onLogout={handleLogout} />;
+  if (activeSession) {
+    return (
+      <div className="container mx-auto p-4 md:p-8">
+        <SessionDetail
+          session={activeSession}
+          currentUser={currentUser}
+          userLocation={userLocation}
+          onBack={() => setActiveSessionId(null)}
+          onSetReady={handleSetReady}
+          onProposalResponse={handleProposalResponse}
+        />
+      </div>
+    );
   }
 
   return (
-    <div className="bg-gray-900 text-white min-h-screen p-4 sm:p-6 lg:p-8">
-        <div className="max-w-7xl mx-auto">{renderContent()}</div>
+    <div className="container mx-auto p-4 md:p-8">
+      <Dashboard
+        currentUser={currentUser}
+        sessions={sessions}
+        userLocation={userLocation}
+        emails={emails}
+        calendarEvents={calendarEvents}
+        onCreateSession={handleCreateSession}
+        onJoinSession={handleJoinSession}
+        onViewSession={setActiveSessionId}
+        onLogout={handleLogout}
+      />
     </div>
   );
 };
