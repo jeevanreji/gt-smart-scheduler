@@ -9,7 +9,7 @@ declare global {
 }
 
 const CLIENT_ID = '111234179842-vpsmqmcvtaps28hj0t06tokhimo7m537.apps.googleusercontent.com';
-const API_KEY = process.env.API_KEY || '';
+const API_KEY = process.env.VITE_API_KEY || '';
 const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
 
 let tokenClient: any;
@@ -42,8 +42,6 @@ export const initClient = async (): Promise<void> => {
                 try {
                     await window.gapi.client.init({
                         apiKey: API_KEY,
-                        clientId: CLIENT_ID,
-                        scope: SCOPES,
                         discoveryDocs: [
                             "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest",
                             "https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest",
