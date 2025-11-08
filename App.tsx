@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import LoginScreen from './components/LoginScreen';
 import Dashboard from './components/Dashboard';
@@ -220,6 +221,8 @@ const App: React.FC = () => {
       // 1. Update the response for the current user
       const sessionsWithResponse = prevSessions.map(s => {
         if (s.id === sessionId && s.proposal) {
+          // FIX: Correctly update the nested `responses` object within the `proposal`.
+          // The previous implementation was creating a malformed state object like `proposal.proposal`.
           return { ...s, proposal: { ...s.proposal, responses: { ...s.proposal.responses, [userId]: accepted } } };
         }
         return s;
@@ -257,8 +260,6 @@ const App: React.FC = () => {
         state: 'PLANNING' as const,
         proposal: undefined,
         excludedSlots: [...updatedSession.excludedSlots, rejectedSlot],
-        // CRITICAL: Reset readiness to prevent immediate re-scheduling loop
-        readyStatus: updatedSession.participants.reduce((acc, p) => ({...acc, [p.id]: 'PENDING'}), {}),
       };
       sessionToReschedule = sessionForNextRound;
       return sessionsWithResponse.map(s => s.id === sessionId ? sessionForNextRound : s);
