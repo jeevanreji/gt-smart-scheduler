@@ -1,3 +1,5 @@
+// File: CalendarView.tsx (MODIFIED)
+
 import React from 'react';
 import { CalendarEvent } from '../types';
 
@@ -6,12 +8,19 @@ interface CalendarViewProps {
 }
 
 const CalendarView: React.FC<CalendarViewProps> = ({ events }) => {
+// File: CalendarView.tsx (MODIFIED)
 
-  const formatTime = (isoString: string) => {
-      // Check if it's an all-day event (date only)
-      if (isoString.length === 10) return "All Day";
-      return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
+const formatTime = (isoString: string | undefined | null) => {
+    // FIX: Check if the string is defined before trying to read its length
+    if (!isoString) {
+        return "Time Unavailable"; 
+    }
+    
+    // Check if it's an all-day event (date only)
+    if (isoString.length === 10) return "All Day";
+    
+    return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
   return (
     <div className="bg-gray-800 p-4 rounded-lg shadow-lg">
@@ -21,7 +30,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ events }) => {
             <div key={index} className="p-3 bg-gray-700 rounded-lg border-l-4 border-indigo-500">
               <p className="font-semibold text-gray-200">{event.title}</p>
               <p className="text-sm text-gray-400 mt-1">
-                {formatTime(event.startTime)} - {formatTime(event.endTime)}
+                {/* FIX: Use startTimeUTC and endTimeUTC */}
+                {formatTime(event.startTimeUTC)} - {formatTime(event.endTimeUTC)} 
               </p>
             </div>
           ))
