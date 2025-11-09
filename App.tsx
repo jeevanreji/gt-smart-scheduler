@@ -208,66 +208,86 @@ const App: React.FC = () => {
         if (allReady && updatedSession.state === 'PENDING') {
           scheduleMeeting(updatedSession);
         }
+        else if(allReady && updatedSession.state === 'PROPOSED') {
+          // If all participants are ready and the state is PROPOSED, we can confirm the booking
+          handleProposalResponse(updatedSession.id, currentUser.id, true);
+        }
       }
       return newSessions;
     });
   }, [scheduleMeeting]);
 
+  
   const handleProposalResponse = (sessionId: string, userId: string, accepted: boolean) => {
-    let sessionToReschedule: Session | null = null;
-    
-    setSessions(prevSessions => {
-      // 1. Update the response for the current user
-      const sessionsWithResponse = prevSessions.map(s => {
-        if (s.id === sessionId && s.proposal) {
-          return { ...s, proposal: { ...s.proposal, responses: { ...s.proposal.responses, [userId]: accepted } } };
-        }
-        return s;
-      });
-
-      const updatedSession = sessionsWithResponse.find(s => s.id === sessionId);
-      if (!updatedSession?.proposal) return sessionsWithResponse;
-
-      const allResponded = updatedSession.participants.every(p => updatedSession.proposal?.responses[p.id] !== undefined);
-      if (!allResponded) return sessionsWithResponse;
-
-      // 2. All have responded, now decide the outcome
-      const allAccepted = updatedSession.participants.every(p => updatedSession.proposal?.responses[p.id] === true);
-      
-      if (allAccepted) {
-        const newBooking = bookingService.bookRoom(
-            updatedSession.proposal.room,
-            updatedSession.proposal.startTime,
-            updatedSession.proposal.endTime,
-            updatedSession.participants
-        );
-        if (newBooking) {
-            setBookings(prevBookings => [...prevBookings, newBooking]);
-            return sessionsWithResponse.map(s => s.id === sessionId ? { ...s, state: 'CONFIRMED' } : s);
-        } else {
-            // Fails if booking conflict happens last minute (rare but possible)
-            // Fall through to reschedule logic
-        }
-      } 
-      
-      // 3. If not all accepted (or booking failed), we must reschedule
-      const rejectedSlot = { startTime: updatedSession.proposal.startTime, endTime: updatedSession.proposal.endTime };
-      const sessionForNextRound = { 
-        ...updatedSession, 
-        state: 'PLANNING' as const,
-        proposal: undefined,
-        excludedSlots: [...updatedSession.excludedSlots, rejectedSlot],
-        // CRITICAL: Reset readiness to prevent immediate re-scheduling loop
-        readyStatus: updatedSession.participants.reduce((acc, p) => ({...acc, [p.id]: 'PENDING'}), {}),
-      };
-      sessionToReschedule = sessionForNextRound;
-      return sessionsWithResponse.map(s => s.id === sessionId ? sessionForNextRound : s);
+  setSessions(prevSessions => {
+    // 1️⃣ Update the response for this user
+    const updatedSessions = prevSessions.map(s => {
+      if (s.id === sessionId && s.proposal) {
+        return {
+          ...s,
+          proposal: {
+            ...s.proposal,
+            responses: { ...s.proposal.responses, [userId]: accepted },
+          },
+        };
+      }
+      return s;
     });
 
-    if (sessionToReschedule) {
-        scheduleMeeting(sessionToReschedule);
+    const session = updatedSessions.find(s => s.id === sessionId);
+    if (!session || !session.proposal) return updatedSessions;
+
+    const allResponded = session.participants.every(p => session.proposal!.responses[p.id] !== undefined);
+    if (!allResponded) return updatedSessions;
+
+    const allAccepted = session.participants.every(p => session.proposal!.responses[p.id] === true);
+
+    if (allAccepted) {
+      // ✅ Everyone accepted — confirm the booking
+      const newBooking = bookingService.bookRoom(
+        session.proposal.room,
+        session.proposal.startTime,
+        session.proposal.endTime,
+        session.participants
+      );
+
+      if (newBooking) {
+        // Booking succeeded
+        setBookings(prev => [...prev, newBooking]);
+        return updatedSessions.map(s =>
+          s.id === sessionId
+            ? { ...s, state: 'CONFIRMED', proposal: undefined }
+            : s
+        );
+      } else {
+        console.warn("Conflict during booking — replan.");
+        // Booking failed: fall through to reschedule logic below
+      }
     }
-  };
+
+    // ❌ Not all accepted or booking failed — reschedule
+    const rejectedSlot = {
+      startTime: session.proposal.startTime,
+      endTime: session.proposal.endTime,
+    };
+
+    return updatedSessions.map(s =>
+      s.id === sessionId
+        ? {
+            ...s,
+            state: 'PLANNING',
+            proposal: undefined,
+            excludedSlots: [...s.excludedSlots, rejectedSlot],
+            readyStatus: s.participants.reduce(
+              (acc, p) => ({ ...acc, [p.id]: 'PENDING' }),
+              {}
+            ),
+          }
+        : s
+    );
+  });
+};
+
 
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
