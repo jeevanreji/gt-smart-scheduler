@@ -8,7 +8,8 @@ declare global {
   }
 }
 
-const CLIENT_ID = '111234179842-vpsmqmcvtaps28hj0t06tokhimo7m537.apps.googleusercontent.com';
+const CLIENT_ID = ' YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com ';
+const API_KEY = process.env.VITE_API_KEY || '';
 const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
 
 let tokenClient: any;
